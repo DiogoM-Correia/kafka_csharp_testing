@@ -1,0 +1,4 @@
+KafkaConsumer/bin/*
+KafkaConsumer/obj/*
+KafkaProducer/bin/*
+KafkaProducer/obj/*
