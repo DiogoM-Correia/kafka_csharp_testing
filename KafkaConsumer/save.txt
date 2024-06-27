@@ -1,0 +1,155 @@
+using Confluent.Kafka;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+class Program
+{
+    private static readonly string kafkaBootstrapServers = Environment.GetEnvironmentVariable("KAFKA_BOOTSTRAP_SERVERS") ?? "";
+    private static readonly string topicName = "test_topic";
+    private static readonly string groupId = "test_group";
+    public static async Task Main(string[] args)
+    {
+        Console.WriteLine("Version test 1 consumer");
+        if (string.IsNullOrEmpty(kafkaBootstrapServers))
+        {
+            Console.WriteLine("KAFKA_BOOTSTRAP_SERVERS environment variable is not set.");
+            return;
+        }
+        var config = new ConsumerConfig
+        {
+            BootstrapServers = kafkaBootstrapServers,
+            GroupId = groupId,
+            AutoOffsetReset = AutoOffsetReset.Earliest,
+            EnableAutoCommit = false
+        };
+        using var consumer = new ConsumerBuilder<Ignore, string>(config)
+            .SetPartitionsAssignedHandler((c, partitions) =>
+            {
+                Console.WriteLine($"Partitions assigned: [{string.Join(", ", partitions)}]");
+            })
+            .SetPartitionsRevokedHandler((c, partitions) =>
+            {
+                Console.WriteLine($"Partitions revoked: [{string.Join(", ", partitions)}]");
+            })
+            .Build();
+        var cts = new CancellationTokenSource();
+        
+        try
+        {
+            await MonitorTopicAndConsume(consumer, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            Console.WriteLine("Operation canceled.");
+        }
+        finally
+        {
+            consumer.Close();
+        }
+    }
+    private static async Task MonitorTopicAndConsume(IConsumer<Ignore, string> consumer, CancellationToken cancellationToken)
+    {
+        var adminClientConfig = new AdminClientConfig { BootstrapServers = kafkaBootstrapServers };
+        using var adminClient = new AdminClientBuilder(adminClientConfig).Build();
+        bool wasSubscribed = false;
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                var metadata = adminClient.GetMetadata(TimeSpan.FromSeconds(5));
+                bool topicExists = MetadataContainsTopic(metadata, topicName);
+                Console.WriteLine($"Topic exists? {topicExists}. Topic is subscribed? {wasSubscribed}");
+                if (topicExists && !wasSubscribed)
+                {
+                    consumer.Subscribe(topicName);
+                    wasSubscribed = true;
+                    Console.WriteLine($"Subscribed to topic {topicName}.");
+                }
+                if (!topicExists && wasSubscribed)
+                {
+                    consumer.Unsubscribe();
+                    wasSubscribed = false;
+                    Console.WriteLine($"Unsubscribed from topic {topicName} as it is no longer available.");
+                }
+                if (wasSubscribed)
+                {
+                    var consumptionTask = ConsumeMessages(consumer, cancellationToken);
+                    await consumptionTask;
+                }
+                else
+                {
+                    Console.WriteLine("Topic not available. Waiting for topic to be recreated...");
+                    await Task.Delay(5000, cancellationToken); // Wait before checking again
+                }
+            }
+            catch (KafkaException ex) when (ex.Error.Code == ErrorCode.UnknownTopicOrPart)
+            {
+                Console.WriteLine($"KafkaException: {ex.Message}");
+                consumer.Unsubscribe();
+                wasSubscribed = false;
+                Console.WriteLine($"Unsubscribed from topic {topicName} due to error: {ex.Message}. Waiting for topic to be recreated...");
+                await Task.Delay(5000, cancellationToken); // Wait before checking again
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Unexpected error: {ex.Message}");
+                await Task.Delay(5000, cancellationToken); // Wait before retrying
+            }
+            Console.WriteLine($"Check for messages. Cancellation token is {cancellationToken.IsCancellationRequested}");
+            await Task.Delay(500, cancellationToken); // Wait before another iteration
+        }
+    }
+    private static bool MetadataContainsTopic(Metadata metadata, string topicName)
+    {
+        foreach (var topic in metadata.Topics)
+        {
+            if (topic.Topic == topicName && !topic.Error.IsError)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+    private static async Task ConsumeMessages(IConsumer<Ignore, string> consumer, CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    var cr = consumer.Consume(cancellationToken);
+                    if (cr != null)
+                    {
+                        Console.WriteLine($"Consumed message '{cr.Value}' at: '{cr.TopicPartitionOffset}'.");
+                        consumer.Commit(cr);
+                    }
+                }
+                catch (ConsumeException e)
+    {
+                    Console.WriteLine($"Consume error: {e.Error.Reason}");
+                }
+                catch (KafkaException e)
+                {
+                    Console.WriteLine($"Kafka error during consumption: {e.Error.Reason}");
+                    throw; // Let the monitor loop handle re-subscription
+                }
+                catch (OperationCanceledException)
+                {
+                    Console.WriteLine($"OperationCanceledException");
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Exception {ex.Message}");
+                    throw;
+                }
+                Console.WriteLine($"In consume loop. Cancellation token is {cancellationToken.IsCancellationRequested}");
+            }
+        }
+        finally
+        {
+            Console.WriteLine("Leaving consume loop.");
+        }
+    }
+}

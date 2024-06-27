@@ -1,0 +1,72 @@
+version: '3'
+services:
+  my-zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: my-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 32181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "32181:32181"
+    networks:
+      - kafka_network
+
+  my-kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: my-kafka
+    depends_on:
+      - my-zookeeper
+    ports:
+      - "39092:39092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: my-zookeeper:32181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://my-kafka:39092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:39092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    networks:
+      - kafka_network
+
+  kafkaproducer:
+    build:
+      context: ./KafkaProducer
+      dockerfile: Dockerfile
+    container_name: kafkaproducer
+    depends_on:
+      - my-kafka
+      - my-zookeeper
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: my-kafka:39092
+    networks:
+      - kafka_network
+
+  kafkaconsumer:
+    build:
+      context: ./KafkaConsumer
+      dockerfile: Dockerfile
+    container_name: kafkaconsumer
+    depends_on:
+      - my-kafka
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: my-kafka:39092
+    networks:
+      - kafka_network
+
+  kafka-manager-test:
+    image: hlebalbau/kafka-manager:latest
+    container_name: kafka-manager-test
+    depends_on:
+      - my-zookeeper
+      - my-kafka
+    ports:
+      - "9000:9000"
+    environment:
+      ZK_HOSTS: my-zookeeper:32181
+    networks:
+      - kafka_network
+
+networks:
+  kafka_network:
+    driver: bridge
