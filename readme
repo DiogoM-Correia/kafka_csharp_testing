@@ -1,7 +1,7 @@
 1 - Open terminal window in base folder and run: 
     docker-compose build
 2 - Start kafka manager with
-    docker-compose up kafka-manager
+    docker-compose up kafka-manager-test
 3 - Run kafka producer with 
     docker-compose run -it kafkaproducer
 4 - Run kafka consumer with 
