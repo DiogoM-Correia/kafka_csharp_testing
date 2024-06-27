@@ -2,7 +2,7 @@
     docker-compose build
 2 - Start kafka manager with
     docker-compose up kafka-manager-test
-3 - Run kafka producer with 
+3 - Run kafka producer with bellow command. Then you can use this to send messages to topic.
     docker-compose run -it kafkaproducer
 4 - Run kafka consumer with 
     docker-compose up kafkaconsumer
